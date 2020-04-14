@@ -2,8 +2,9 @@ import pandas as pd
 import requests
 from gspread_pandas import Spread, Client
 from datetime import datetime
+import time
 from functools import lru_cache
-
+from tqdm import tqdm
 
 class Config:
     def __init__(self):
@@ -31,23 +32,32 @@ class APIManager:
             return response.json()
 
     def main(self):
+
+        st = time.time()
         todays_date = datetime.today().strftime("%Y-%m-%d")
         endpoint = f"global/timeseries/2020-01-01/{todays_date}"
         data_raw = self.request_api(endpoint)
         count = data_raw["count"]
-        for country, country_data in data_raw["result"].items():
+        print(f'Received Data Of Total {count} Countries')
+        for country, country_data in tqdm(data_raw["result"].items()):
             print(f"Country Name: {country}, Total Data: {len(country_data)}")
             country_data = pd.DataFrame(country_data)
+            country_data = country_data[['date','confirmed','deaths','recovered']]
             country_data = self.get_statistics(country_data)
             self.gspread.update_sheet(country, country_data)
-
+        print('Completed All Countries, Proceeding to Global Data')
         global_data_raw = pd.DataFrame(
             self.request_api("global/count")["result"]
         ).T.reset_index()
         country_data = self.get_statistics(global_data_raw)
-        print(country_data)
+        
         self.gspread.update_sheet("GLOBAL", global_data_raw)
+        stop = time.time() - st
 
+        self.gspread.update_sheet("LOGS", pd.DataFrame([{'Script Updated At': '%Y-%m-%d %H:%M:%S','count':count, 'Time Taken For Running':stop}]))
+        print('All Processes Completed Exiting....')
+
+        
     def get_active_cases(self, df):
         df["active_cases"] = df["confirmed"] - (df["deaths"] + df["recovered"])
         return df
@@ -80,8 +90,14 @@ class APIManager:
 
         df["change_in_active_cases"] = df["active_cases_rate"].diff()
 
+        df['confirmed_rate'] = df["confirmed"].diff()
+        
+        df['change_confirmed_rate'] = df['confirmed_rate'].diff()
+        
         return df
 
 
 if __name__ == "__main__":
     data = APIManager().main()
+
+
